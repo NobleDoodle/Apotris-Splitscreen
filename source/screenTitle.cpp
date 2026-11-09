@@ -28,6 +28,7 @@
 #include "sceneHandling.hpp"
 #include "sceneModes.hpp"
 #include "sceneStats.hpp"
+#include "splitScreen.h"
 #ifdef GBA
 #include "detectEmulators.h"
 #endif
@@ -381,6 +382,18 @@ bool settingsChanged() {
     return false;
 }
 
+// What the menus after the title rely on: the falling blocks' tiles, skin,
+// colours and the menu music. Split screen boots past the title and needs it.
+void loadMenuBasics() {
+    loadTiles(2, 102, sprite37tiles_bin, sprite37tiles_bin_size / 32);
+    loadTiles(2, 105, sprite41tiles_bin, sprite41tiles_bin_size / 32);
+
+    setSkin();
+    setLightMode();
+
+    playSongRandom(0);
+}
+
 void TitleScene::init() {
     reset();
     toggleBG(3, false);
@@ -389,15 +402,9 @@ void TitleScene::init() {
     loadSpriteTiles(512 + 96, title2tiles_bin, 8, 4);
 
     loadPalette(12 + 16, 0, title_pal_bin, title_pal_bin_size / 2);
-    loadTiles(2, 102, sprite37tiles_bin, sprite37tiles_bin_size / 32);
-    loadTiles(2, 105, sprite41tiles_bin, sprite41tiles_bin_size / 32);
-
-    setSkin();
-    setLightMode();
+    loadMenuBasics();
 
     clearSprites(128);
-
-    playSongRandom(0);
 
     // backgroundGrid
     setTiles(26, 0, 32 * 32,
@@ -473,7 +480,10 @@ void TitleScene::update() {
         return;
     }
 
-    demoTimer++;
+    // In split screen only player 1 runs the attract demo. Player 2's would
+    // play its own sound effects over player 1's while nobody is playing.
+    if (!split::isChild())
+        demoTimer++;
     if (demoTimer >= demoMax) {
         demoTimer = 0;
         enableBot = true;

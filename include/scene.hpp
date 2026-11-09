@@ -437,6 +437,9 @@ public:
 
     std::string room;
 
+    int row = 0;           // 0: who to play, 1: Split Screen
+    int xs[2] = {48, 120}; // where the two words are drawn
+
     void draw();
     void update();
     bool control();

@@ -9,6 +9,7 @@
 #include "multiplayerClasses.h"
 #include "rumble.h"
 #include "scene.hpp"
+#include "splitScreen.h"
 #include "text.h"
 #include <queue>
 #include <string>
@@ -281,6 +282,11 @@ void drawEnemyBoard() {
 #ifdef TRACY_ENABLE
     ZoneScoped;
 #endif
+
+    // Split screen battle: the opponent's whole board is the other half of
+    // the screen. (CPU Battle still needs it: that is the bot's only view.)
+    if (split::active() && multiplayer)
+        return;
 
     if (!multiplayerLink->stateMachine.IsInState<MultiplayerStates::Lost>() &&
         (game->won || game->lost)) {

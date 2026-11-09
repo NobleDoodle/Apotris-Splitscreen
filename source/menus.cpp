@@ -2019,8 +2019,11 @@ void MultBattleScene::showReadyPlayers() {
 
     int verticalOffset = 0;
 
-    std::unordered_map<u8, std::string> playerNames =
-        multiplayerLink->getPlayerNames();
+    // In player order: an unordered_map's order differs between processes, so
+    // the same lobby listed its players in different orders on each side.
+    const auto unordered = multiplayerLink->getPlayerNames();
+    const std::map<u8, std::string> playerNames(unordered.begin(),
+                                                unordered.end());
 
     int counter = 0;
     for (const std::pair<const u8, std::string>& pair : playerNames) {

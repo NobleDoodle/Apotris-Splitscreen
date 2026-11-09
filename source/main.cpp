@@ -42,6 +42,7 @@
 
 #include "scenario.hpp"
 #include "sceneColorEditor.hpp"
+#include "splitScreen.h"
 
 #include <cstdio>
 
@@ -119,11 +120,15 @@ const std::list<std::string> menuControlOptions = {
     "Pause", "Restart", "Special 1", "Special 2", "Special 3",
 };
 
+void loadMenuBasics(); // screenTitle.cpp
+
 void initialize() {
     initRumble();
 
 #ifdef PC
-    setFullscreen(savefile != nullptr && savefile->settings.fullscreen);
+    // Split screen is couch mode: always fullscreen, whatever the save says.
+    setFullscreen(split::isHost() ||
+                  (savefile != nullptr && savefile->settings.fullscreen));
 
 #endif
 
@@ -186,6 +191,8 @@ void initialize() {
 int main(int argc, char* argv[]) {
     std::string scenarioPath;
 #ifdef PC
+    split::init(argc, argv);
+
     for (int i = 1; i < argc; i++) {
         if (std::string(argv[i]) == "--scenario") {
             if (i + 1 == argc) {
@@ -201,6 +208,15 @@ int main(int argc, char* argv[]) {
 
     loadSave();
 #ifdef PC
+    // Split screen: player 2 is called player2. Its save began as a copy of
+    // player 1's, name included.
+    if (split::isChild()) {
+        std::memset(savefile->latestName, ' ', sizeof(savefile->latestName) - 1);
+        std::memcpy(savefile->latestName, "player2", 7);
+        savefile->latestName[sizeof(savefile->latestName) - 1] = '\0';
+    }
+#endif
+#ifdef PC
     if (!scenarioPath.empty()) {
         if (!scenarioLoad(scenarioPath))
             return 1;
@@ -212,7 +228,15 @@ int main(int argc, char* argv[]) {
     initialize();
 
 #ifndef MULTIBOOT
-    changeScene([]() { return new TitleScene(); });
+#ifdef PC
+    // Split screen is a battle: player 2 starts in its queue and joins player
+    // 1 at once. With --split, player 1 does too.
+    if (split::isChild() || (split::requested() && split::enable())) {
+        loadMenuBasics();
+        MatchmakingQueue::startLocal(false);
+    } else
+#endif
+        changeScene([]() { return new TitleScene(); });
 #else
     changeScene([]() { return new MultBattleScene(); });
 #endif

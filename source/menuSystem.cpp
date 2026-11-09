@@ -2,6 +2,8 @@
 #include "logging.h"
 #include "menu.h"
 #include "matchmakingQueue.hpp"
+#include "localLink.hpp"
+#include "splitScreen.h"
 #include "scene.hpp"
 #include "sceneAudio.hpp"
 #include "sceneColorEditor.hpp"
@@ -10,6 +12,7 @@
 #include "sceneGraphics.hpp"
 #include "sceneHandling.hpp"
 #include "sceneModes.hpp"
+#include "sceneMultiplayerResults.hpp"
 #include "sceneSaving.hpp"
 #include "sceneSleep.hpp"
 #include "sceneStats.hpp"
@@ -53,6 +56,14 @@ void changeScene(std::function<Scene*()> f, Transitions t) {
     sceneSwitch = true;
 }
 
+// Split screen lasts one battle: lobby, games, results and Play Again.
+static bool partOfABattle(Scene* next) {
+    return next->isQueueWaitingScene() || next->isMatchFoundScene() ||
+           dynamic_cast<MultBattleScene*>(next) ||
+           dynamic_cast<GameScene*>(next) ||
+           dynamic_cast<MultiplayerResultsScene*>(next);
+}
+
 void switchScene() {
     gradient(0);
     vsync();
@@ -76,6 +87,9 @@ void switchScene() {
 
     delete scene;
     scene = factory();
+    // Player 1 left the battle for a menu: close player 2, back to one screen.
+    if (split::isHost() && !partOfABattle(scene))
+        split::disable();
     scene->init();
 
     vsync();
@@ -246,12 +260,16 @@ void sceneSwitcher(const std::string& str) {
         */
 #endif
 #else
-        if (MatchmakingQueue::isQueued())
+        if (MatchmakingQueue::isQueued()) {
             changeScene([]() { return new QueueWaitingScene(); },
                         Transitions::FADE);
-        else
+        } else if (split::isChild()) {
+            // Player 2's only opponent is player 1.
+            MatchmakingQueue::startLocal();
+        } else {
             changeScene([]() { return new MatchMakingScene(); },
                         Transitions::FADE);
+        }
 #endif
     } else if (str == "CPU Battle" || str == "Battle") {
         changeScene([]() { return new CPUBattleScene(); }, Transitions::FADE);

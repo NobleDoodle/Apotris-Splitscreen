@@ -418,6 +418,42 @@ void drawWithShaders(SDL_Window* window, SDL_Surface* img, bool shadersEnabled,
         SDL_GL_SwapWindow(window);
 }
 
+static void setCrop(int w, int h, float s);
+
+void drawSplitWithShaders(SDL_Window* window, const void* left,
+                          const void* right, int viewWidth, int viewHeight,
+                          int divider, float leftScale, float rightScale) {
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, shaderTexture);
+    glUseProgram(shaderProgram);
+
+    if (glad_glBindVertexArray) {
+        glBindVertexArray(vao);
+    }
+
+    const void* frames[2] = {left, right};
+    const float scales[2] = {leftScale, rightScale};
+    for (int i = 0; i < 2; i++) {
+        if (frames[i] == nullptr)
+            continue;
+        setCrop(viewWidth, viewHeight, scales[i]); // each half zooms alone
+        glViewport(i * viewWidth, 0, viewWidth, viewHeight);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCREEN_WIDTH, SCREEN_HEIGHT, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, frames[i]);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    }
+
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(viewWidth - divider / 2, 0, divider, viewHeight);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDisable(GL_SCISSOR_TEST);
+
+    SDL_GL_SwapWindow(window);
+}
+
 void freeShaders() {
     if (shaderStatus == ShaderStatus::NOT_INITED)
         return;
@@ -441,12 +477,17 @@ void refreshShaderResolution(int w, int h, float s) {
         return;
     }
     LOGI("refreshShaderResolution start");
+    setCrop(w, h, s);
+    glViewport(0, 0, width, height);
+    LOGI("refreshShaderResolution end");
+}
+
+// Uniforms and texture coordinates for showing the middle of the frame at
+// scale s in a w x h viewport.
+static void setCrop(int w, int h, float s) {
     width = w;
     height = h;
     scale = s;
-
-    glViewport(0, 0, width, height);
-    LOGI("Set Viewport");
 
     int res_out = glGetUniformLocation(shaderProgram, "OutputSize");
     glUniform2f(res_out, (float)width, (float)height);
@@ -456,7 +497,6 @@ void refreshShaderResolution(int w, int h, float s) {
 
     int res_tex = glGetUniformLocation(shaderProgram, "TextureSize");
     glUniform2f(res_tex, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT);
-    LOGI("Set Uniforms");
 
     float offsetX = (1.0 - ((width / scale) / SCREEN_WIDTH)) / 2;
     float offsetY = (1.0 - ((height / scale) / SCREEN_HEIGHT)) / 2;
@@ -475,7 +515,6 @@ void refreshShaderResolution(int w, int h, float s) {
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-    LOGI("refreshShaderResolution end");
 }
 
 static bool hasSuffix(const std::string& s, const std::string& suffix) {

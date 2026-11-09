@@ -3,6 +3,7 @@
 
 #ifdef TE
 #include "LinkWebRTC.hpp"
+#include "localLink.hpp"
 #include "Tilengine.h"
 #include "def.h"
 #include "liba_pc.h"
@@ -148,9 +149,44 @@ void platformInit() {
 
     windowInit();
 
-    linkUniversal = new LinkUniversal();
+#ifdef SPLIT_SCREEN_SUPPORTED
+    // Player 2 only ever battles player 1, over a socket. Player 1 swaps one
+    // in while split screen is on (useLocalLink).
+    if (split::isChild())
+        linkUniversal = new LocalLink(split::linkFd(), 1);
+    else
+#endif
+        linkUniversal = new LinkUniversal();
     multiplayerLink = new MultiplayerLink(linkUniversal);
 }
+
+#ifdef SPLIT_SCREEN_SUPPORTED
+// While split screen is on, battles go to the other half of the screen; the
+// online link waits here, untouched, until it is switched off.
+static LinkUniversal* onlineLink = nullptr;
+static MultiplayerLink* onlineMultiplayerLink = nullptr;
+
+bool battleInProgress() { return multiplayerLink && multiplayerLink->active; }
+
+void useLocalLink(bool on) {
+    if (on == (onlineLink != nullptr))
+        return;
+    MatchmakingQueue::cancel();
+    if (on) {
+        onlineLink = linkUniversal;
+        onlineMultiplayerLink = multiplayerLink;
+        linkUniversal = new LocalLink(split::linkFd(), 0);
+        multiplayerLink = new MultiplayerLink(linkUniversal);
+    } else {
+        delete multiplayerLink;
+        delete linkUniversal;
+        linkUniversal = onlineLink;
+        multiplayerLink = onlineMultiplayerLink;
+        onlineLink = nullptr;
+        onlineMultiplayerLink = nullptr;
+    }
+}
+#endif
 
 void shutdownMultiplayer() {
     // Flush BYE before closing RTC.

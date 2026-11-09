@@ -56,6 +56,8 @@ struct BoardUpdatePacket {
     u8 board[20][10]; // 4-bit color values: 0=empty, 1-7=color, 8=garbage
 };
 
+// Split screen swaps the transport for a local socket (LocalLink in
+// localLink.hpp), so the public interface is virtual.
 class LinkUniversal {
 #ifndef SWITCH
     static constexpr char STUN_SERVER[] = "stun:stun.l.google.com:19302";
@@ -116,8 +118,8 @@ class LinkUniversal {
 public:
     std::string localId;
     std::string localPlayerName;
-    ~LinkUniversal() { deactivate(); }
-    [[nodiscard]] u8 currentPlayerId() const {
+    virtual ~LinkUniversal() { deactivate(); }
+    [[nodiscard]] virtual u8 currentPlayerId() const {
         return playerId < 0 ? 0 : playerId;
     }
     static std::string randomId(size_t length) {
@@ -366,7 +368,7 @@ public:
                       << std::endl;
         }
     }
-    void activate() {
+    virtual void activate() {
         if (active)
             return;
         session = events->reset();
@@ -606,9 +608,9 @@ public:
         outgoing.try_emplace(peerId);
         return pc;
     };
-    [[nodiscard]] bool isActive() const { return active; }
+    [[nodiscard]] virtual bool isActive() const { return active; }
 
-    void deactivate() {
+    virtual void deactivate() {
         if (!active)
             return;
         send(2 << 13); // BYE
@@ -658,7 +660,7 @@ public:
         playerId = -1;
     }
 
-    bool sync() {
+    virtual bool sync() {
         try {
             events->drain(*this);
         } catch (const std::exception& error) {
@@ -688,7 +690,7 @@ public:
         return isConnected();
     }
 
-    bool canRead(u8 pId) {
+    virtual bool canRead(u8 pId) {
         if (pId == playerId)
             return false;
         auto peer = playerIdToString.find(pId);
@@ -699,7 +701,7 @@ public:
         return queue != readQueues.end() && !queue->second.empty();
     }
 
-    u16 read(u8 pId) {
+    virtual u16 read(u8 pId) {
         auto peer = playerIdToString.find(pId);
         if (peer == playerIdToString.end())
             return 0;
@@ -712,7 +714,7 @@ public:
         return front.packet;
     }
 
-    std::optional<BoardUpdatePacket> readBoardUpdate() {
+    virtual std::optional<BoardUpdatePacket> readBoardUpdate() {
         std::lock_guard<std::mutex> guard{readQueueLock};
         if (incomingBoardUpdates.empty()) {
             return std::nullopt;
@@ -737,16 +739,16 @@ public:
 #endif
         return send(packet.data(), packet.size());
     }
-    bool send(const std::byte* data, size_t len) {
+    virtual bool send(const std::byte* data, size_t len) {
         const bool board =
             len == 104 && data[0] == std::byte{0} && data[1] == std::byte{0x1c};
         return enqueueMessage(rtc::binary{data, data + len}, board);
     }
 
-    bool send(std::string msg) { return enqueueMessage(std::move(msg), false); }
+    virtual bool send(std::string msg) { return enqueueMessage(std::move(msg), false); }
 
     // Do not retain obsolete seed/readiness broadcasts for negotiating peers.
-    bool sendState(u16 packet) {
+    virtual bool sendState(u16 packet) {
         return enqueueMessage(
             rtc::binary{reinterpret_cast<const std::byte*>(&packet),
                         reinterpret_cast<const std::byte*>(&packet) +
@@ -820,9 +822,9 @@ public:
         }
     }
 
-    [[nodiscard]] bool isConnected() const { return playerCount() > 1; }
+    [[nodiscard]] virtual bool isConnected() const { return playerCount() > 1; }
 
-    [[nodiscard]] u8 playerCount() const {
+    [[nodiscard]] virtual u8 playerCount() const {
         std::shared_lock<std::shared_mutex> guard(multiplayerLock);
         return active ? 1 + std::count_if(dataChannelMap.begin(),
                                           dataChannelMap.end(),
@@ -832,7 +834,8 @@ public:
                       : 0;
     }
 
-    [[nodiscard]] std::unordered_map<u8, std::string> playerNames() const {
+    [[nodiscard]] virtual std::unordered_map<u8, std::string>
+    playerNames() const {
         std::unordered_map<u8, std::string> names;
         for (const auto& [id, name] : playerIdToName) {
             auto peer = playerIdToString.find(id);

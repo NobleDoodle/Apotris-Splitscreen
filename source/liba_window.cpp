@@ -12,8 +12,10 @@
 
 #include "def.h"
 #include "scenario.hpp"
+#include "scene.hpp"
 
 #include "shader.h"
+#include "splitScreen.h"
 
 #include "nanotime.h"
 
@@ -76,9 +78,8 @@ bool charging = false;
 SDL_Window* window;
 SDL_Renderer* renderer;
 SDL_Texture* texture;
+SDL_Texture* textureRight; // split screen: player 2's half
 SDL_GameController* controller;
-
-int controllerCount = 0;
 
 bool fullscreen = false;
 
@@ -118,6 +119,33 @@ int KEY_RIGHT = (SDL_CONTROLLER_BUTTON_DPAD_RIGHT << 16) | packKey(SDLK_d);
 int KEY_SELECT = (SDL_CONTROLLER_BUTTON_BACK << 16) | packKey(SDLK_3);
 int KEY_START = (SDL_CONTROLLER_BUTTON_START << 16) | packKey(SDLK_ESCAPE);
 
+// Single player takes input from every controller, not just the first, so
+// whichever pad someone picks up works (one player can switch pads).
+// Rumble goes to the pad that pressed a button last.
+static void openController(int index) {
+    if (!SDL_IsGameController(index) ||
+        SDL_GameControllerFromInstanceID(
+            SDL_JoystickGetDeviceInstanceID(index)) != nullptr)
+        return;
+    SDL_GameController* pad = SDL_GameControllerOpen(index);
+    if (pad != nullptr && controller == nullptr)
+        controller = pad;
+}
+
+static void closeController(SDL_JoystickID instanceId) {
+    SDL_GameController* pad = SDL_GameControllerFromInstanceID(instanceId);
+    if (pad == nullptr)
+        return;
+    if (pad == controller)
+        controller = nullptr;
+    SDL_GameControllerClose(pad);
+}
+
+static void rumbleOnPad(SDL_JoystickID instanceId) {
+    if (SDL_GameController* pad = SDL_GameControllerFromInstanceID(instanceId))
+        controller = pad;
+}
+
 void windowInit() {
     window = nullptr;
 
@@ -148,15 +176,39 @@ void windowInit() {
 
     window = SDL_CreateWindow("Apotris PC", SDL_WINDOWPOS_CENTERED,
                               SDL_WINDOWPOS_CENTERED, screenWidth, screenHeight,
-                              SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL |
-                                  SDL_WINDOW_RESIZABLE);
+                              split::isChild()
+                                  ? SDL_WINDOW_HIDDEN
+                                  : SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL |
+                                        SDL_WINDOW_RESIZABLE);
+
+    // Started without a display (say over SSH), SDL falls back to a driver that
+    // shows nothing and the game runs invisibly, sound and all. Stop instead.
+    // Asking for a driver on purpose (SDL_VIDEODRIVER) is left alone.
+    if (!split::isChild() && getenv("SDL_VIDEODRIVER") == nullptr) {
+        const char* driver = SDL_GetCurrentVideoDriver();
+        const std::string name = driver ? driver : "none";
+        if (window == nullptr || name == "none" || name == "dummy" ||
+            name == "offscreen" || name == "evdev") {
+            fprintf(stderr,
+                    "Apotris: no display to open a window on (video driver: "
+                    "%s). Start it from the desktop session, or set DISPLAY "
+                    "or WAYLAND_DISPLAY to it.\n",
+                    name.c_str());
+            split::shutdown();
+            exit(1);
+        }
+    }
 
     renderer = SDL_CreateRenderer(window, -1, 0);
 
-    SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
-    if (SDL_NumJoysticks() > 0) {
-        controller = SDL_GameControllerOpen(0);
-        controllerCount = SDL_NumJoysticks();
+    // Player 2 has no pads of its own: player 1 reads them all and, in split
+    // screen, passes player 2's on. Prompts start as pad buttons over there.
+    if (split::isChild())
+        lastInputType = InputType::CONTROLLER;
+    if (!split::isChild()) {
+        SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
+        for (int i = 0; i < SDL_NumJoysticks(); i++)
+            openController(i);
     }
 
     SDL_ShowCursor(SDL_DISABLE);
@@ -176,7 +228,10 @@ void windowInit() {
     SDL_FreeSurface(icon);
 #endif
 
-    checkLatestVersion();
+    // This blocks startup, and split screen has to work offline.
+    if (!split::active() && !split::requested()) {
+        checkLatestVersion();
+    }
 }
 
 void pressKey(int key, InputType type) {
@@ -203,6 +258,11 @@ void handleInput() {
         auto it = currentlyPressed.begin();
         bool found = false;
 
+        // Player 2's input only comes from player 1 (pumpChild). Its SDL may
+        // still open the keyboards and mice itself; ignore what they send.
+        if (split::isChild() && event.type != SDL_QUIT)
+            continue;
+
         switch (event.type) {
         case SDL_KEYDOWN:
             key = event.key.keysym.sym;
@@ -214,13 +274,39 @@ void handleInput() {
                 scenarioReplayLast();
                 break;
             }
+            // A repeat must not press a key held for player 2 on player 1. The
+            // release goes to player 2, so it would stay stuck here.
+            if (split::isHost() && event.key.repeat != 0) {
+                break;
+            }
+            if (split::routeKey(key, true)) {
+                break;
+            }
             if (!scenarioIsPlaying()) {
                 scenarioRecordInput(key, true, false);
                 pressKey(key, InputType::KEYBOARD);
             }
             break;
+        case SDL_CONTROLLERDEVICEADDED: // which: device index
+            if (split::isHost()) {
+                split::openPads();
+            } else {
+                openController(event.cdevice.which);
+            }
+            break;
+        case SDL_CONTROLLERDEVICEREMOVED: // which: instance id
+            if (split::isHost()) {
+                split::padRemoved(event.cdevice.which);
+            } else {
+                closeController(event.cdevice.which);
+            }
+            break;
         case SDL_CONTROLLERBUTTONDOWN:
             key = event.cbutton.button;
+            if (split::routePadButton(event.cbutton.which, key, true)) {
+                break;
+            }
+            rumbleOnPad(event.cbutton.which);
             if (!scenarioIsPlaying()) {
                 scenarioRecordInput(key, true, true);
                 pressKey(key, InputType::CONTROLLER);
@@ -228,6 +314,9 @@ void handleInput() {
             break;
         case SDL_KEYUP:
             key = event.key.keysym.sym;
+            if (split::routeKey(key, false)) {
+                break;
+            }
             if (key != SDLK_F9 && key != SDLK_F10 && !scenarioIsPlaying()) {
                 scenarioRecordInput(key, false, false);
                 unpressKey(key, InputType::KEYBOARD);
@@ -235,12 +324,19 @@ void handleInput() {
             break;
         case SDL_CONTROLLERBUTTONUP:
             key = event.cbutton.button;
+            if (split::routePadButton(event.cbutton.which, key, false)) {
+                break;
+            }
             if (!scenarioIsPlaying()) {
                 scenarioRecordInput(key, false, true);
                 unpressKey(key, InputType::CONTROLLER);
             }
             break;
         case SDL_CONTROLLERAXISMOTION:
+            if (split::routePadAxis(event.caxis.which, event.caxis.axis,
+                                    event.caxis.value)) {
+                break;
+            }
             if (!scenarioIsPlaying())
                 handleAnalogInput(event.caxis.axis, event.caxis.value);
             break;
@@ -257,6 +353,9 @@ void handleInput() {
             break;
         case SDL_JOYBUTTONDOWN:
             key = event.jbutton.button;
+            if (split::routePadButton(event.jbutton.which, key, true)) {
+                break;
+            }
             if (!scenarioIsPlaying()) {
                 scenarioRecordInput(key, true, true);
                 pressKey(key, InputType::CONTROLLER);
@@ -264,6 +363,9 @@ void handleInput() {
             break;
         case SDL_JOYBUTTONUP:
             key = event.jbutton.button;
+            if (split::routePadButton(event.jbutton.which, key, false)) {
+                break;
+            }
             if (!scenarioIsPlaying()) {
                 scenarioRecordInput(key, false, true);
                 unpressKey(key, InputType::CONTROLLER);
@@ -276,6 +378,9 @@ void handleInput() {
             break;
         }
     }
+
+    split::pumpChild();
+    split::pumpHost();
 
     scenarioApplyInput(currentlyPressed);
 
@@ -353,7 +458,91 @@ uint32_t keys_raw() {
     return allKeys;
 }
 
-void updateWindow(uint8_t* framebuffer) {
+// Split screen: width of one player's half of the window.
+static int viewWidth() {
+    return split::isHost() ? screenWidth / 2 : screenWidth;
+}
+
+#define SPLIT_DIVIDER 2
+
+// While a game is being played each half zooms in: the boards and their HUD
+// fit in 192 of the screen's 240 columns, so at 1080p they grow from 4x to 5x.
+// Menus and the end screen use the full width and stay at the fit scale.
+#define SPLIT_ZOOM_WIDTH 192
+static float fitScale = 3;
+static float zoomScale = 3;
+static bool zoomed = false;
+
+static bool playingNow() {
+    return game != nullptr && !game->won && !game->lost &&
+           dynamic_cast<GameScene*>(scene) != nullptr;
+}
+
+static void updateZoom() {
+    if (!split::active() || playingNow() == zoomed)
+        return;
+    zoomed = !zoomed;
+    windowScale = zoomed ? zoomScale : fitScale;
+    split::reportScale(windowScale);
+}
+
+static void drawSplitHalf(SDL_Texture* halfTexture, int x, float scale) {
+    const SDL_Rect clip = {x, 0, viewWidth(), screenHeight};
+    const int w = SCREEN_WIDTH * scale;
+    const int h = SCREEN_HEIGHT * scale;
+    const SDL_Rect dest = {x + (viewWidth() - w) / 2, (screenHeight - h) / 2, w,
+                           h};
+    SDL_RenderSetClipRect(renderer, &clip);
+    SDL_RenderCopy(renderer, halfTexture, nullptr, &dest);
+    SDL_RenderSetClipRect(renderer, nullptr);
+}
+
+static void presentSplit(uint8_t* framebuffer) {
+    const uint8_t* right = split::latestFrame();
+    const float rightScale =
+        split::childScale() > 0 ? split::childScale() : fitScale;
+
+    if (shaderStatus == ShaderStatus::OK && savefile->settings.shaders != 0) {
+        if (render) {
+            drawSplitWithShaders(window, framebuffer, right, viewWidth(),
+                                 screenHeight, SPLIT_DIVIDER, windowScale,
+                                 rightScale);
+        }
+        return;
+    }
+
+    for (SDL_Texture** t : {&texture, &textureRight}) {
+        if (*t == nullptr) {
+            *t = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
+                                   SDL_TEXTUREACCESS_STREAMING, SCREEN_WIDTH,
+                                   SCREEN_HEIGHT);
+        }
+    }
+
+    SDL_UpdateTexture(texture, nullptr, framebuffer, SCREEN_WIDTH * 4);
+    if (right) {
+        SDL_UpdateTexture(textureRight, nullptr, right, SCREEN_WIDTH * 4);
+    }
+
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+
+    if (render) {
+        drawSplitHalf(texture, 0, windowScale);
+        if (right) {
+            drawSplitHalf(textureRight, viewWidth(), rightScale);
+        }
+        const SDL_Rect divider = {viewWidth() - SPLIT_DIVIDER / 2, 0,
+                                  SPLIT_DIVIDER, screenHeight};
+        SDL_RenderFillRect(renderer, &divider);
+    }
+
+    rects.clear();
+
+    SDL_RenderPresent(renderer);
+}
+
+static void presentSingle(uint8_t* framebuffer) {
     const int in_width = 512;
     const int in_height = 512;
 
@@ -433,6 +622,17 @@ void updateWindow(uint8_t* framebuffer) {
     }
 
     SDL_FreeSurface(img);
+}
+
+void updateWindow(uint8_t* framebuffer) {
+    updateZoom();
+    if (split::isChild()) {
+        split::publishFrame(framebuffer);
+    } else if (split::isHost()) {
+        presentSplit(framebuffer);
+    } else {
+        presentSingle(framebuffer);
+    }
 
     // Cap FPS
     nanotime_step(&stepper);
@@ -451,24 +651,29 @@ void updateWindow(uint8_t* framebuffer) {
 
     frame_start = SDL_GetPerformanceCounter();
 
-    // handle controller hotplug
-    if (SDL_NumJoysticks() != controllerCount) {
-        if (controllerCount == 0) {
-            controller = SDL_GameControllerOpen(0);
-        } else if (SDL_NumJoysticks() == 0) {
-            SDL_GameControllerClose(controller);
-        }
-
-        controllerCount = SDL_NumJoysticks();
-    }
-
+    // Controller hotplug is handled by SDL_CONTROLLERDEVICE* events.
     handleInput();
 
     updateBatteryInfo();
 }
 
 void refreshWindowSize() {
-    if (savefile != nullptr) {
+    if (split::isHost()) {
+        // Fit the whole 240x160 play area in one half, or the boards' part of
+        // it while playing. The zoom setting would crop it; it does not apply.
+        fitScale = std::min(viewWidth() / 240.0f, screenHeight / 160.0f);
+        zoomScale = std::min(viewWidth() / (float)SPLIT_ZOOM_WIDTH,
+                             screenHeight / 160.0f);
+        if (savefile != nullptr && savefile->settings.integerScale) {
+            fitScale = std::max(1.0f, std::floor(fitScale));
+            zoomScale = std::max(1.0f, std::floor(zoomScale));
+        }
+        split::sendView(screenHeight, fitScale, zoomScale);
+        windowScale = fitScale;
+    } else if (split::isChild()) {
+        // applyChildView() set both scales from the host.
+        windowScale = fitScale;
+    } else if (savefile != nullptr) {
         if (savefile->settings.zoom > -1) {
             windowScale = 1 + (float)savefile->settings.zoom / 10;
         } else {
@@ -504,9 +709,45 @@ void refreshWindowSize() {
         setGradient(savefile->settings.backgroundGradient);
 
         if (savefile->settings.shaders != 0) {
-            refreshShaderResolution(screenWidth, screenHeight, windowScale);
+            refreshShaderResolution(viewWidth(), screenHeight, windowScale);
         }
     }
+
+    // Rows (and so the gradient) above use the fit scale, which shows the
+    // most of the screen; the zoomed view is inside it.
+    if (split::active()) {
+        windowScale = zoomed ? zoomScale : fitScale;
+        split::reportScale(windowScale);
+    }
+}
+
+void applyChildView(int height, float fit, float zoom) {
+    screenHeight = height;
+    fitScale = fit;
+    zoomScale = zoom;
+    refreshWindowSize();
+}
+
+// Split screen was switched on or off (split::enable / disable).
+void onSplitScreenChanged(bool on) {
+    // Both players stay live even if the window loses focus.
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, on ? "1" : "0");
+    if (on) {
+        split::openPads();
+    } else {
+        // Every pad is player 1's again. Split screen may have closed the one
+        // player 1 rumbled through, and opened none of those plugged in since.
+        controller = nullptr;
+        for (int i = 0; i < SDL_NumJoysticks(); i++)
+            openController(i);
+        if (controller == nullptr && SDL_NumJoysticks() > 0)
+            controller = SDL_GameControllerFromInstanceID(
+                SDL_JoystickGetDeviceInstanceID(0));
+    }
+    zoomed = false;
+    // Split screen is couch mode: always fullscreen, whatever the save says.
+    setFullscreen(on || (savefile != nullptr && savefile->settings.fullscreen));
+    refreshWindowSize();
 }
 
 bool closed() {
@@ -521,6 +762,9 @@ void toggleRendering(bool r) { render = r; }
 void initRumble() {};
 
 std::string getSavefilePath() {
+    if (split::isChild())
+        return split::childSavePath();
+
 #ifdef __APPLE__
     // Get the user's home directory
     if (!homeDir) {
@@ -668,8 +912,10 @@ void quit() {
     if (quitting)
         return;
     quitting = true;
+    split::shutdown();
     // SDL_QUIT bypasses main()'s cleanup.
     shutdownMultiplayer();
+    SDL_DestroyTexture(textureRight);
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
@@ -737,19 +983,34 @@ void unbindDuplicateKey(int& dest, uint32_t key) {
     }
 }
 
+static SDL_GameController* rumblePad() {
+    return split::isHost() ? (SDL_GameController*)split::playerOnePad()
+                           : controller;
+}
+
 void rumbleOutput(uint16_t strength) {
     if (lastInputType != InputType::CONTROLLER)
         return;
+    if (split::isChild()) {
+        split::rumblePlayerTwo(strength);
+        return;
+    }
 
     uint16_t sdl_strength =
         std::min(0xFFFF, strength * 0xFFFF / 8); // Cap to 0xFFFF
-    SDL_GameControllerRumble(controller, sdl_strength, sdl_strength, 64);
+    SDL_GameControllerRumble(rumblePad(), sdl_strength, sdl_strength, 64);
 }
 
-void rumbleStop() { SDL_GameControllerRumble(controller, 0, 0, 1); }
+void rumbleStop() {
+    if (split::isChild()) {
+        split::rumblePlayerTwo(0);
+        return;
+    }
+    SDL_GameControllerRumble(rumblePad(), 0, 0, 1);
+}
 
 void setFullscreen(bool state) {
-    if (fullscreen == state)
+    if (fullscreen == state || split::isChild())
         return;
     fullscreen = state;
     if (!fullscreen) {
@@ -759,7 +1020,12 @@ void setFullscreen(bool state) {
     }
 }
 
-void shaderInit(int index) { initShaders(window, index); }
+void shaderInit(int index) {
+    // The child has no GL window. The host's own setting applies to both halves.
+    if (!split::isChild()) {
+        initShaders(window, index);
+    }
+}
 
 void shaderDeinit() { freeShaders(); }
 

@@ -1,3 +1,4 @@
+#include "splitScreen.h"
 #include "scene.hpp"
 
 std::string getDescription(const std::string& element) {
@@ -39,7 +40,8 @@ std::string getDescription(const std::string& element) {
         return "The goal is to relax...";
 
     } else if (element == "Multi Battle") {
-        return "Battle your friends.";
+        return split::supported() ? "Online or split screen."
+                                  : "Battle your friends.";
 #ifdef GBA
     } else if (element == "Wireless Pak") {
         return "Battle friends without a cart via wireless.";

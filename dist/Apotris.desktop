@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=Apotris
-Comment=A free and multiplatform block stacking game
+Name=Apotris Splitscreen
+Comment=Apotris with local two-player split screen (unofficial fork)
 Exec=Apotris
 Icon=Apotris
 Terminal=false

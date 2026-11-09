@@ -12,6 +12,7 @@
 #include <sstream>
 
 #include "soloud.h"
+#include "splitScreen.h"
 #include "soloud_openmpt.h"
 #include "soloud_wav.h"
 #include "soloud_wavstream.h"
@@ -273,7 +274,9 @@ void startSong(int song, bool loop) {
     }
 
     musicQueue.setParams(44100, 2);
-    currentSongHandle = gSoloud.play(musicQueue, musicVolume, 0, true);
+    // Player 1's process plays the music in split screen.
+    currentSongHandle =
+        gSoloud.play(musicQueue, split::isChild() ? 0 : musicVolume, 0, true);
     musicArray.at(song)->setLooping(loop);
     musicQueue.play(*musicArray.at(song));
 
@@ -300,7 +303,7 @@ void resumeSong() { gSoloud.setPause(currentSongHandle, 0); }
 void setMusicVolume(int volume) {
     musicVolume = volume / (512.0 / 2);
 
-    gSoloud.setVolume(currentSongHandle, musicVolume);
+    gSoloud.setVolume(currentSongHandle, split::isChild() ? 0 : musicVolume);
 }
 
 void setMusicTempo(int tempo) {

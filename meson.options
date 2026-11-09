@@ -1,4 +1,6 @@
 option('portmaster', type : 'boolean', value: false)
+# Link the system's shared SDL2. Needed where libSDL2.a's static X11 deps do not link.
+option('shared_sdl', type : 'boolean', value: false)
 
 # Options specific to N3DS port:
 option('debug_ui', type : 'boolean', value: false)

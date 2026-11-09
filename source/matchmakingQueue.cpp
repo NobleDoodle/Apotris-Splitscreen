@@ -3,6 +3,7 @@
 #if !defined(GBA) && !defined(MULTIBOOT)
 
 #include "def.h"
+#include "localLink.hpp"
 #include "multiplayerClasses.h"
 #include "platform.hpp"
 #include "scene.hpp"
@@ -32,6 +33,17 @@ void start() {
     transitioningFromMatchFound = false;
     returnToQueueOnConnectionFailure = false;
     multiplayerLink->activate();
+}
+
+void startLocal(bool fade) {
+    roomId.clear();
+    start();
+    localLinkInvite();
+    if (fade)
+        changeScene([]() { return new QueueWaitingScene(); },
+                    Transitions::FADE);
+    else
+        changeScene([]() { return new QueueWaitingScene(); });
 }
 
 void cancel() {
@@ -81,6 +93,12 @@ bool returnToWaitingAfterConnectionFailure() {
 }
 
 void update() {
+    // Split screen: the other player opened a battle, so queue for it too.
+    // Being queued is what brings up MATCH FOUND (Accept/Deny) here.
+    localLinkPoll();
+    if (!queued && !multiplayerLink->active && localLinkTakeInvite())
+        start();
+
     if (transitioningFromMatchFound) {
         if (scene->isMatchFoundScene())
             return;
@@ -180,6 +198,7 @@ void drawOverlay() {
 
 namespace MatchmakingQueue {
 void start() {}
+void startLocal(bool) {}
 void cancel() {}
 void acceptMatch() {}
 void denyMatch() {}

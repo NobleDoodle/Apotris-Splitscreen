@@ -83,6 +83,8 @@ sources = files(
     src_dir / 'text.cpp',
     src_dir / 'nanotime.c',
     src_dir / 'shader.cpp',
+    src_dir / 'splitScreen.cpp',
+    src_dir / 'localLink.cpp',
     src_dir / 'gl.c',
     src_dir / 'gles2.c',
     src_dir / 'xoshiro128plusplus.c',
@@ -327,7 +329,7 @@ if host_machine.system() != 'gba' and host_machine.system() != 'n3ds'
             if not get_option('portmaster')
                 sdl2_dep = dependency(
                     'sdl2',
-                    static: true,
+                    static: not get_option('shared_sdl'),
                     default_options: ['default_library=static', 'test=false'],
                     fallback: ['sdl2', 'sdl2_dep'],
                 )

@@ -1,3 +1,40 @@
+<p align="center"><img src="sprites/logo512.png" alt="Apotris" width="200"></p>
+
+# Apotris Splitscreen
+
+**Apotris is created by [akouzoukos](https://apotris.com). All credit for the game goes to them.**
+This is an unofficial fork that only adds local two-player split screen to the Linux PC build. Everything
+else (the game, its modes, art, handling and online play, and the music and contributions listed in the
+game's Credits screen) is akouzoukos's work and that of the people they credit. It is not affiliated with
+or endorsed by them.
+
+- **Official site and downloads:** <https://apotris.com> · <https://apotris.com/downloads>
+- **Original source:** <https://gitea.com/akouzoukos/apotris>
+- **Support the creator:** <https://apotris.com/donate> ·
+  [GitHub Sponsors](https://github.com/sponsors/akouzoukos) · [PayPal](https://paypal.me/akouzoukos)
+- **Community:** [Apotris Discord](https://discord.com/invite/jQnxmXS7tr)
+
+If you enjoy Apotris, please donate to akouzoukos. Report split screen problems here, and everything
+else upstream.
+
+## What this fork adds
+
+- **Play > Multi Battle > Split Screen.** A second player appears on the right half of the same window,
+  already in the battle lobby. Battles, first-to-3/5/7, garbage, results and Play Again work offline.
+  Leaving the battle for a menu closes the second player. `Apotris --split` starts straight in a split
+  screen battle.
+- The first two controllers are player 1 and player 2; the keyboard is player 1's, and F8 hands it over.
+- Single player takes input from every controller, not only the first.
+
+![A split screen battle: player 1 on the left, player 2 on the right](images/splitscreen-battle.png)
+
+Downloads (an AppImage and a tarball) are on this repository's Releases page. Design, build and test
+notes: [SPLITSCREEN.md](SPLITSCREEN.md). Licensed AGPLv3, like upstream ([LICENSE.txt](LICENSE.txt)).
+
+Everything below is upstream's README.
+
+---
+
 # Apotris
 
 <https://apotris.com>

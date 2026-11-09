@@ -4,6 +4,7 @@
 #include "rumblePatterns.hpp"
 #include "scene.hpp"
 #include "sceneModes.hpp"
+#include "splitScreen.h"
 #include "sprites.h"
 #ifdef GBA
 #include "detectEmulators.h"
@@ -13,6 +14,7 @@
 #else
 #include "LinkWebRTC.hpp"
 #endif
+
 #include "prng.h"
 #if defined(PC) || defined(ANDROID) || defined(PORTMASTER)
 #include <atomic>
@@ -88,6 +90,14 @@ static void fetchOnlinePlayerCount() {
                      cpr::Url{"https://api.apotris.com/v1/online-players"});
 }
 
+// Multi Battle's Split Screen choice, under the online ones: a battle with a
+// second player on the right half. Player 2 has none.
+#define SPLIT_TOGGLE_Y 128
+
+static bool hasSplitToggle() { return split::supported() && !split::isChild(); }
+
+static std::string splitToggleText() { return "Split Screen"; }
+
 static void drawMatchMakingText(int totalPlayers = -1) {
     clearText();
     // clearText restores a previously configured text area; this scene owns
@@ -98,6 +108,11 @@ static void drawMatchMakingText(int totalPlayers = -1) {
     const std::string str2 = "to play with?";
     naprint(str1, (240 - getVariableWidth(str1)) / 2, 56);
     naprint(str2, (240 - getVariableWidth(str2)) / 2, 66);
+
+    if (hasSplitToggle()) {
+        const std::string toggle = splitToggleText();
+        naprint(toggle, (240 - getVariableWidth(toggle)) / 2, SPLIT_TOGGLE_Y);
+    }
 
     if (totalPlayers >= 0) {
         const std::string playersOnline =
@@ -1826,6 +1841,10 @@ void MatchFoundScene::init() {
     setTiles(27, 0, 32 * 32, tileBuild(34, false, false, 0));
     enableBlend((0b101110 << 8) + (1 << 6) + (1 << 3));
     drawMatchFoundText(frames);
+    // Online, nothing is picked so a stray press cannot accept. In split
+    // screen the invite is from the other half of the screen: Accept is ready.
+    if (split::active())
+        selection = 0;
 
     if (returnToGame && !paused) {
         paused = true;
@@ -1897,8 +1916,13 @@ void MatchFoundScene::deinit() {
 }
 
 void MatchMakingScene::init() {
+    // In split screen the only opponent is the other half of the screen.
+    const bool local = split::active();
+    row = 0;
+
 #if defined(PC) || defined(ANDROID) || defined(PORTMASTER)
-    fetchOnlinePlayerCount();
+    if (!local)
+        fetchOnlinePlayerCount();
 #endif
 
     clearSprites(128);
@@ -1918,11 +1942,17 @@ void MatchMakingScene::init() {
     naprint(str2, (240 - getVariableWidth(str2)) / 2, 66);
 #endif
 
-    wordSprites[0].setText("FRIENDS");
-    wordSprites[0].show(48, 104, 14);
-
+    wordSprites[0].setText(!local              ? "FRIENDS"
+                           : split::isChild() ? "PLAYER1"
+                                              : "PLAYER2");
     wordSprites[1].setText("RANDOMS");
-    wordSprites[1].show(120, 104, 14);
+    xs[0] = local ? (240 - wordSprites[0].width) / 2 : 48;
+    xs[1] = 120;
+    wordSprites[0].show(xs[0], 104, 14);
+    if (local)
+        wordSprites[1].hide();
+    else
+        wordSprites[1].show(xs[1], 104, 14);
 
     // backgroundGrid
     setTiles(26, 0, 32 * 32,
@@ -1933,8 +1963,8 @@ void MatchMakingScene::init() {
     lengths[0] = wordSprites[0].width;
     lengths[1] = wordSprites[1].width;
 
-    pos[0] = 48 + lengths[0] / 2;
-    pos[1] = 120 + lengths[1] / 2;
+    pos[0] = xs[0] + lengths[0] / 2;
+    pos[1] = xs[1] + lengths[1] / 2;
 
     loadSpriteTiles(16 * 7, blockSprite, 1, 1);
     for (int i = 0; i < 2; i++) {
@@ -1951,10 +1981,34 @@ std::string nameInput(int, bool* = nullptr);
 
 bool MatchMakingScene::control() {
     MenuKeys k = savefile->settings.menuKeys;
+    const bool local = split::active();
 
-    if (key_hit(k.left) || key_hit(k.right)) {
+    if (hasSplitToggle() && (key_hit(k.up) || key_hit(k.down))) {
+        row = !row;
+        sfx(SFX_MENUMOVE);
+    }
+
+    if (row == 0 && !local && (key_hit(k.left) || key_hit(k.right))) {
         playRandoms = !playRandoms;
         sfx(SFX_MENUMOVE);
+    }
+
+    if (key_hit(k.confirm) && row == 1) {
+        // Player 2 starts in the battle's queue; both join the lobby.
+        if (split::enable()) {
+            sfx(SFX_MENUCONFIRM);
+            MatchmakingQueue::startLocal();
+        } else {
+            sfx(SFX_MENUCANCEL);
+        }
+        return true;
+    }
+
+    if (key_hit(k.confirm) && local) {
+        // Player 2 battling player 1 again: no room code or online queue.
+        sfx(SFX_MENUCONFIRM);
+        MatchmakingQueue::startLocal();
+        return true;
     }
 
     if (key_hit(k.confirm)) {
@@ -2013,31 +2067,41 @@ void MatchMakingScene::draw() {
     int offset = (sinLut(cursorFloat) * 2) >> 12;
     FIXED scale = float2fx((1.0 - ((float)0.1 * offset)));
 
-    const int y = 104;
+    const bool local = split::active();
+    const int word = local ? 0 : playRandoms;
+    int center = pos[word];
+    int length = lengths[word];
+    int y = 104;
+    if (row == 1) {
+        center = 120;
+        length = getVariableWidth(splitToggleText());
+        y = SPLIT_TOGGLE_Y;
+    }
 
     for (int i = 0; i < 2; i++) {
         sprite_unhide(cursorSprites[i], 0);
         sprite_enable_affine(cursorSprites[i], i, true);
         sprite_set_size(cursorSprites[i], scale, i);
 
-        int x = pos[playRandoms] -
-                ((lengths[playRandoms] + 8) / 2 + offset + 4) * ((i) ? -1 : 1) -
-                8;
+        int x = center - ((length + 8) / 2 + offset + 4) * ((i) ? -1 : 1) - 8;
 
         sprite_set_pos(cursorSprites[i], x, y - 5);
     }
 
 #if defined(PC) || defined(ANDROID) || defined(PORTMASTER)
     const int totalPlayers = onlinePlayerCount.load();
-    if (!onlinePlayerCountShown && totalPlayers >= 0) {
+    if (!local && !onlinePlayerCountShown && totalPlayers >= 0) {
         drawMatchMakingText(totalPlayers);
         onlinePlayerCountShown = true;
     }
 #endif
 
     if (!hideSprites) {
-        wordSprites[0].show(48, 104, 14 + (playRandoms == 0));
-        wordSprites[1].show(120, 104, 14 + (playRandoms == 1));
+        wordSprites[0].show(xs[0], 104, 14 + (row == 0 && word == 0));
+        if (local)
+            wordSprites[1].hide();
+        else
+            wordSprites[1].show(xs[1], 104, 14 + (row == 0 && word == 1));
     } else {
         wordSprites[0].hide();
         wordSprites[1].hide();
@@ -2055,7 +2119,7 @@ void MatchMakingScene::update() {
         cursorFloat = 0;
 
 #if defined(PC) || defined(ANDROID) || defined(PORTMASTER)
-    if (++timer >= ONLINE_PLAYER_COUNT_REFRESH_FRAMES) {
+    if (!split::active() && ++timer >= ONLINE_PLAYER_COUNT_REFRESH_FRAMES) {
         timer = 0;
         onlinePlayerCountShown = false;
         fetchOnlinePlayerCount();
