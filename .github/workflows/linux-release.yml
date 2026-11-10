@@ -1,0 +1,130 @@
+name: Linux release
+
+# Builds the Linux release for x86_64 and aarch64 the way upstream's own
+# release workflow does, in upstream's builder images, and attaches an
+# AppImage and a tarball (each with a .sha256) for both to the release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and attach to, e.g. v4.2.0-splitscreen.1
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            image: docker.io/akouzoukos/apotris-linux:2026-5-28-2
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: docker.io/akouzoukos/apotris-arm64:2026-5-28-3
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Install git and libcurl
+        run: apt-get update && apt-get install -y git libcurl4-openssl-dev
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          submodules: recursive
+
+      - name: Build
+        run: |
+          meson setup build-release -Db_lto=true -Db_lto_mode=thin --buildtype=release
+          meson compile -C build-release
+          strip build-release/Apotris
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCH=$(uname -m)
+          VERSION=${TAG#v}
+          NAME="Apotris-Splitscreen-$VERSION-linux-$ARCH"
+          GLIBC=$(objdump -T build-release/Apotris | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 | cut -d_ -f2)
+
+          ./tools/build-appimage.sh build-release
+          mkdir -p release-out "$NAME/license"
+          mv "Apotris-$ARCH.AppImage" "release-out/Apotris-Splitscreen-$VERSION-$ARCH.AppImage"
+
+          cp build-release/Apotris LICENSE.txt "$NAME/"
+          cp -r build-release/assets "$NAME/assets"
+          find "$NAME/assets" -name meson.build -delete
+          cp license/* "$NAME/license/"
+          # Statically linked subprojects missing from upstream's license folder.
+          for pair in cpr:subprojects/cpr-1.11.2/LICENSE \
+                      libdatachannel:subprojects/libdatachannel/LICENSE \
+                      libjuice:subprojects/libjuice/LICENSE \
+                      usrsctp:subprojects/usrsctp/LICENSE.md \
+                      plog:subprojects/plog-1.1.10/LICENSE \
+                      nlohmann_json:subprojects/nlohmann_json-3.11.2/LICENSE.MIT \
+                      openssl:subprojects/openssl-3.0.8/LICENSE.txt; do
+            src=${pair#*:}
+            if [ -f "$src" ]; then
+              cp "$src" "$NAME/license/LICENSE.${pair%%:*}.txt"
+            else
+              echo "::warning::$src not found"
+            fi
+          done
+
+          cat > "$NAME/README.txt" <<EOF
+          Apotris Splitscreen $VERSION (Linux $ARCH)
+
+          Apotris is created by akouzoukos. All credit for the game goes to them:
+            https://apotris.com
+            Support the creator: https://apotris.com/donate
+                                 https://github.com/sponsors/akouzoukos
+                                 https://paypal.me/akouzoukos
+          This is an unofficial fork that only adds local two-player split screen. It
+          is not affiliated with or endorsed by akouzoukos.
+
+          Run ./Apotris (keep it next to assets/), or use the AppImage from the same
+          release. Play > Multi Battle > Split Screen starts a battle with a second
+          player on the right half of the window; the first two controllers are
+          player 1 and player 2. ./Apotris --split starts straight in a split screen
+          battle. Player 2's save is in ~/.local/share/Apotris-p2/.
+
+          Needs glibc $GLIBC or newer and libcurl 4.
+
+          Source (AGPLv3, see LICENSE.txt): https://github.com/$GITHUB_REPOSITORY
+          Original source: https://gitea.com/akouzoukos/apotris
+          Third-party licenses are in license/.
+          EOF
+
+          tar -czf "release-out/$NAME.tar.gz" "$NAME"
+          cd release-out
+          for f in *; do sha256sum "$f" > "$f.sha256"; done
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: release-out/*
+          if-no-files-found: error
+
+  attach:
+    name: Attach to the release
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"

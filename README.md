@@ -26,7 +26,7 @@ else upstream.
 - The first two controllers are player 1 and player 2; the keyboard is player 1's, and F8 hands it over.
 - Single player takes input from every controller, not only the first.
 
-Downloads (an AppImage and a tarball) are on this repository's Releases page. Design, build and test
+Downloads (an AppImage and a tarball, for x86_64 and ARM64) are on this repository's Releases page. Design, build and test
 notes: [SPLITSCREEN.md](SPLITSCREEN.md). Licensed AGPLv3, like upstream ([LICENSE.txt](LICENSE.txt)).
 
 Everything below is upstream's README.

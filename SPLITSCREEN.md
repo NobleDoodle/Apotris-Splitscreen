@@ -117,6 +117,11 @@ podman run --rm -v "$PWD":/root/apotris -w /root/apotris docker.io/akouzoukos/ap
              tools/build-appimage.sh build-release'
 ```
 
+`.github/workflows/linux-release.yml` does the same on GitHub Actions for x86_64 and aarch64 (upstream's
+`apotris-linux` and `apotris-arm64` images, the arm64 one on GitHub's ARM runner) and attaches an AppImage
+and a tarball for each to the release. It runs when a release is published, or by hand from the Actions
+tab (Linux release > Run workflow, with the tag).
+
 ## Tests
 
 Everything runs on a private Xvfb with a throwaway `HOME` and no audio device. Real pads are hidden, and
