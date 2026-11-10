@@ -1,4 +1,4 @@
-<p align="center"><img src="sprites/logo512.png" alt="Apotris" width="200"></p>
+![Apotris Splitscreen: the Apotris logo over a two-player split screen battle](images/splitscreen-header.png)
 
 # Apotris Splitscreen
 
@@ -25,8 +25,6 @@ else upstream.
   screen battle.
 - The first two controllers are player 1 and player 2; the keyboard is player 1's, and F8 hands it over.
 - Single player takes input from every controller, not only the first.
-
-![A split screen battle: player 1 on the left, player 2 on the right](images/splitscreen-battle.png)
 
 Downloads (an AppImage and a tarball) are on this repository's Releases page. Design, build and test
 notes: [SPLITSCREEN.md](SPLITSCREEN.md). Licensed AGPLv3, like upstream ([LICENSE.txt](LICENSE.txt)).
