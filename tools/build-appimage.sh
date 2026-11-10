@@ -2,8 +2,8 @@
 #
 # build-appimage.sh - Package Apotris Linux build as an AppImage
 #
-# This script creates an AppImage by directly concatenating the AppImageKit
-# runtime with a squashfs filesystem. No appimagetool or FUSE required.
+# This script creates an AppImage by directly concatenating the AppImage
+# type2-runtime with a squashfs filesystem. No appimagetool or FUSE required.
 #
 # Prerequisites:
 #   1. Build Apotris for Linux first:
@@ -39,13 +39,16 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APPIMG_ARCH="$(uname -m)"
 
 # ------------------------------------------------------------------
-# 1. Download AppImageKit runtime if missing
+# 1. Download the AppImage runtime if missing. type2-runtime is static and has
+#    FUSE 3 built in, so the AppImage also runs where only FUSE 3 is installed
+#    (AppImageKit's old runtime needs libfuse.so.2, which many distros no
+#    longer ship).
 # ------------------------------------------------------------------
-RUNTIME_FILE="$PROJECT_DIR/$BUILD_DIR/runtime-$APPIMG_ARCH"
+RUNTIME_FILE="$PROJECT_DIR/$BUILD_DIR/type2-runtime-$APPIMG_ARCH"
 if [ ! -f "$RUNTIME_FILE" ] || [ ! -s "$RUNTIME_FILE" ]; then
-	echo "==> Downloading AppImageKit runtime for $APPIMG_ARCH..."
+	echo "==> Downloading AppImage type2-runtime for $APPIMG_ARCH..."
 	wget -q -O "$RUNTIME_FILE" \
-		"https://github.com/AppImage/AppImageKit/releases/download/continuous/runtime-$APPIMG_ARCH"
+		"https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-$APPIMG_ARCH"
 	if [ ! -f "$RUNTIME_FILE" ] || [ ! -s "$RUNTIME_FILE" ]; then
 		echo "Error: Failed to download runtime"
 		exit 1
